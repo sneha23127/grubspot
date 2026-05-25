@@ -1,6 +1,44 @@
-import React from 'react';
+import React, { useState } from 'react';
+import axios from 'axios';
 
 function Footer() {
+  const [subject, setSubject] = useState('');
+  const [message, setMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [status, setStatus] = useState(null); // 'success' | 'error'
+
+  const handleSendFeedback = async () => {
+    if (!message.trim() || !subject.trim()) return;
+
+    setIsSending(true);
+    setStatus(null);
+
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      await axios.post('http://localhost:5000/api/tickets', {
+        user_name: user.name || 'Anonymous Guest',
+        subject: subject,
+        description: message,
+        category: 'General',
+        priority: 'Low'
+      });
+      
+      setStatus('success');
+      setMessage('');
+      setSubject('');
+      setTimeout(() => setStatus(null), 3000);
+    } catch (error) {
+      console.error('Feedback error:', error);
+      setStatus('error');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const activeSubs = user.id ? JSON.parse(localStorage.getItem(`activeSubscriptions_${user.id}`) || '[]') : [];
+  const isSubscriber = user.role === 'student' && activeSubs.length > 0;
+
   return (
     <footer>
       <div className="container">
@@ -23,13 +61,56 @@ function Footer() {
           
           <div className="feedback-form">
             <h3 className="footer-heading">Send Us Feedback</h3>
-            <p className="footer-text" style={{ marginBottom: '16px', fontSize: '13px' }}>Have suggestions or found an issue? Let us know!</p>
-            <div style={{ position: 'relative' }}>
-              <input type="text" placeholder="Your message..." style={{ width: '100%', padding: '12px 100px 12px 16px', borderRadius: '24px', background: '#222', border: 'none', color: 'white', fontSize: '14px' }} />
-              <button className="feedback-send-btn">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                Send
-              </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <input 
+                type="text" 
+                placeholder="Subject"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                disabled={isSending}
+                style={{ 
+                  width: '100%', 
+                  padding: '10px 16px', 
+                  borderRadius: '12px', 
+                  background: '#222', 
+                  border: 'none', 
+                  color: 'white', 
+                  fontSize: '13px'
+                }} 
+              />
+              <div style={{ position: 'relative' }}>
+                <input 
+                  type="text" 
+                  placeholder={status === 'success' ? "Thank you!" : "Your message..."}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  disabled={isSending}
+                  style={{ 
+                    width: '100%', 
+                    padding: '10px 100px 10px 16px', 
+                    borderRadius: '12px', 
+                    background: status === 'error' ? '#3d1a1a' : '#222', 
+                    border: status === 'success' ? '1px solid #4CAF50' : 'none', 
+                    color: 'white', 
+                    fontSize: '13px',
+                    transition: '0.3s'
+                  }} 
+                />
+                <button 
+                  className="feedback-send-btn" 
+                  onClick={handleSendFeedback}
+                  disabled={isSending || !message.trim() || !subject.trim()}
+                  style={{ 
+                    opacity: isSending || !message.trim() || !subject.trim() ? 0.6 : 1,
+                    right: '4px',
+                    padding: '5px 12px',
+                    fontSize: '12px'
+                  }}
+                >
+                  {isSending ? '...' : 'Send'}
+                </button>
+              </div>
+              {status === 'error' && <p style={{ color: '#ff5252', fontSize: '11px' }}>Failed to send. Please try again.</p>}
             </div>
           </div>
 

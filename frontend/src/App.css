@@ -502,12 +502,20 @@ nav {
   position: absolute;
   top: 12px;
   left: 12px;
-  background: #4CAF50;
+  background: #7E7E7E;
   color: white;
   padding: 4px 10px;
   border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
+}
+
+.mess-tag.veg {
+  background: #4CAF50 !important;
+}
+
+.mess-tag.non-veg, .mess-tag.veg-non-veg {
+  background: #FF5252 !important;
 }
 
 .mess-content {
@@ -1260,8 +1268,10 @@ footer {
 }
 
 .profile-grid {
-  display: grid;
-  grid-template-columns: 55fr 45fr;
+  display: flex;
+  flex-direction: column;
+  max-width: 800px;
+  margin: 0 auto;
   gap: 24px;
 }
 
@@ -1767,12 +1777,14 @@ footer {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  align-items: stretch;
 }
 
 .admin-sidebar-header {
   height: 80px;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   padding: 0 24px;
   border-bottom: 1px solid var(--border-light);
   gap: 12px;
@@ -1810,11 +1822,13 @@ footer {
   flex-direction: column;
   gap: 16px;
   justify-content: flex-start;
+  align-items: stretch;
 }
 
 .admin-nav-item {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   padding: 12px 16px;
   border-radius: 10px;
   color: var(--text-light);
@@ -1871,6 +1885,7 @@ footer {
 .admin-user-box {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   padding: 8px;
   cursor: pointer;
@@ -1978,6 +1993,26 @@ footer {
   justify-content: space-between;
   align-items: center;
 }
+
+.admin-stat-box-row {
+  background: white;
+  padding: 24px;
+  border-radius: 12px;
+  border: 1px solid var(--border-light);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.admin-stat-box-row .stat-icon-wrap {
+  margin-bottom: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 
 .stat-icon-wrap {
   width: 40px;
@@ -2591,6 +2626,7 @@ footer {
   font-weight: 700;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   cursor: pointer;
   border-radius: 10px;
@@ -2966,6 +3002,8 @@ footer {
 .owner-status-pill.expiring-soon .dot { background: #E65100; }
 .owner-status-pill.expired { color: #7E7E7E; }
 .owner-status-pill.expired .dot { background: #7E7E7E; }
+.owner-status-pill.paused { color: #FF9800; }
+.owner-status-pill.paused .dot { background: #FF9800; }
 
 .owner-pagination {
   padding: 24px;
@@ -3076,3 +3114,94 @@ input:checked + .slider:before { transform: translateX(20px); }
 .icon-purple { background: #F3E5F5; color: #7B1FA2; }
 .icon-peach  { background: #FFF3E0; color: #E65100; }
 
+/* ── Forgot Password page specific styles ────────────────── */
+.label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.label-row .input-label {
+  margin-bottom: 0;
+}
+
+.send-otp-btn {
+  background: none;
+  border: none;
+  color: var(--orange);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.2s;
+}
+
+.send-otp-btn:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+.send-otp-btn:disabled {
+  color: var(--text-light);
+  cursor: not-allowed;
+  text-decoration: none;
+  opacity: 0.6;
+}
+
+.otp-container {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 8px;
+  margin-bottom: 16px;
+}
+
+.otp-input {
+  width: 52px;
+  height: 52px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  border: none;
+  border-radius: 10px;
+  background-color: #FFF0E6; /* Light orange/peach background */
+  color: var(--text-dark);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.otp-input:focus {
+  background-color: var(--peach);
+  box-shadow: 0 0 0 2px var(--orange);
+}
+
+.back-login-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-light);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 24px;
+  transition: color 0.2s ease;
+}
+
+.back-login-link:hover {
+  color: var(--text-dark);
+}
+
+
+
+/* Spinner & Modal Animations */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}

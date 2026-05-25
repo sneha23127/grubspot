@@ -5,7 +5,7 @@ import Footer from '../components/Footer';
 
 function Profile() {
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('user');
+    const savedUser = sessionStorage.getItem('user');
     const userData = savedUser ? JSON.parse(savedUser) : null;
     
     return {
@@ -14,7 +14,7 @@ function Profile() {
       phone: userData?.phone || '+91 00000 00000',
       location: userData?.address || 'Location not set',
       role: userData?.role || 'Student',
-      joined: userData?.created_at ? new Date(userData.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Recently'
+      joined: userData?.created_at ? new Date(userData.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Recently'
     };
   });
   const [isEditing, setIsEditing] = useState(false);
@@ -35,14 +35,23 @@ function Profile() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('user');
+    sessionStorage.removeItem('user');
     navigate('/login');
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     setIsEditing(false);
-    // In a real app, this would be an API call
-    localStorage.setItem('user', JSON.stringify({ ...JSON.parse(localStorage.getItem('user') || '{}'), ...user }));
+    
+    // In a real app, this would be an API call to the backend
+    try {
+      const currentSession = JSON.parse(sessionStorage.getItem('user') || '{}');
+      const updatedUser = { ...currentSession, ...user, role: currentSession.role }; // Preserve role from session
+      
+      sessionStorage.setItem('user', JSON.stringify(updatedUser));
+      alert('Profile updated successfully!');
+    } catch (err) {
+      console.error('Error saving profile:', err);
+    }
   };
 
   return (
@@ -163,54 +172,7 @@ function Profile() {
             </div>
           </div>
 
-          {/* Right Column: Subscriptions & Activity */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            
-            <div className="profile-card">
-              <h2 className="card-title">Active Subscription</h2>
-              
-              <div style={{ textAlign: 'center', padding: '40px 20px', background: '#F9FAFB', borderRadius: '12px', border: '1px dashed #E5E7EB' }}>
-                <div style={{ fontSize: '32px', marginBottom: '12px' }}>🍱</div>
-                <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#374151', marginBottom: '4px' }}>No active subscriptions</h3>
-                <p style={{ fontSize: '13px', color: '#6B7280', marginBottom: '20px' }}>Choose a mess and subscribe to start eating!</p>
-                <button 
-                  onClick={() => navigate('/messes')} 
-                  style={{ background: 'var(--orange)', color: 'white', border: 'none', padding: '8px 24px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' }}
-                >
-                  Browse Messes
-                </button>
-              </div>
-            </div>
 
-            <div className="profile-card">
-              <h2 className="card-title">Activity Overview</h2>
-              
-              <div className="activity-stats-row">
-                <div className="activity-stat">
-                  <div className="stat-icon" style={{ color: '#F26B2E' }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                  </div>
-                  <div className="stat-number">0</div>
-                  <div className="stat-text">Saved Messes</div>
-                </div>
-                <div className="activity-stat border-sides">
-                  <div className="stat-icon" style={{ color: '#4CAF50' }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-                  </div>
-                  <div className="stat-number">0 Active</div>
-                  <div className="stat-text">Active Plan</div>
-                </div>
-                <div className="activity-stat">
-                  <div className="stat-icon" style={{ color: '#F26B2E' }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
-                  </div>
-                  <div className="stat-number">0</div>
-                  <div className="stat-text">Reviews Given</div>
-                </div>
-              </div>
-            </div>
-
-          </div>
         </div>
       </main>
 

@@ -24,33 +24,56 @@ function AdminPanel() {
   const [messesList, setMessesList] = useState([]);
   const [usersList, setUsersList] = useState([]);
   const [ticketsList, setTicketsList] = useState([]);
+  const [subscriptionsList, setSubscriptionsList] = useState([]);
+  const [selectedMessReviews, setSelectedMessReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    if (selectedMess) {
+      fetchMessReviews(selectedMess.name);
+    } else {
+      setSelectedMessReviews([]);
+    }
+  }, [selectedMess]);
+
+  const fetchMessReviews = async (messName) => {
+    try {
+      const res = await axios.get(`http://localhost:5000/api/reviews/mess/${encodeURIComponent(messName)}`);
+      if (res.data.status === 'success') {
+        setSelectedMessReviews(res.data.reviews);
+      }
+    } catch (error) {
+      console.error('Error fetching mess reviews:', error);
+    }
+  };
+
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [messesRes, usersRes, ticketsRes] = await Promise.all([
+      const [messesRes, usersRes, ticketsRes, subsRes] = await Promise.all([
         axios.get('http://localhost:5000/api/admin/messes'),
         axios.get('http://localhost:5000/api/admin/users'),
-        axios.get('http://localhost:5000/api/admin/tickets')
+        axios.get('http://localhost:5000/api/admin/tickets'),
+        axios.get('http://localhost:5000/api/admin/subscriptions')
       ]);
 
       if (messesRes.data && messesRes.data.status === 'success' && Array.isArray(messesRes.data.messes)) {
         setMessesList(messesRes.data.messes.map(m => ({
           id: m.id,
           name: m.mess_name,
-          owner: m.name,
+          owner: m.owner_name,
           location: m.address,
-          status: m.status,
-          users: 0, 
+          status: m.mess_status || m.user_status,
+          users: m.total_subscribers || 0, 
           phone: m.phone,
           email: m.email,
           joined: m.created_at ? new Date(m.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : 'N/A',
-          rating: "0.0",
+          rawJoined: m.created_at, // Keep raw timestamp
+          rating: m.avg_rating ? parseFloat(m.avg_rating).toFixed(1) : "0.0",
           complaints: 0
         })));
       }
@@ -64,12 +87,14 @@ function AdminPanel() {
           phone: u.phone,
           role: u.role === 'mess_owner' ? 'Mess Owner' : u.role === 'admin' ? 'Admin' : 'Student',
           status: u.status,
-          joined: u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : 'N/A'
+          joined: u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : 'N/A',
+          rawJoined: u.created_at // Keep raw timestamp for calculation
         })));
       }
 
       if (ticketsRes.data && ticketsRes.data.status === 'success' && Array.isArray(ticketsRes.data.tickets)) {
-        setTicketsList(ticketsRes.data.tickets.map(t => ({
+        const rawTickets = ticketsRes.data.tickets;
+        setTicketsList(rawTickets.map(t => ({
           id: t.ticket_id,
           user: t.user_name,
           mess: t.mess_name,
@@ -79,6 +104,16 @@ function AdminPanel() {
           priority: t.priority,
           date: t.created_at ? new Date(t.created_at).toISOString().split('T')[0] : 'N/A'
         })));
+
+        // Update complaints count in messesList
+        setMessesList(prev => prev.map(m => ({
+          ...m,
+          complaints: rawTickets.filter(t => t.mess_name === m.name).length
+        })));
+      }
+
+      if (subsRes.data && subsRes.data.status === 'success' && Array.isArray(subsRes.data.subscriptions)) {
+        setSubscriptionsList(subsRes.data.subscriptions);
       }
     } catch (error) {
       console.error('Error fetching admin data:', error);
@@ -88,14 +123,15 @@ function AdminPanel() {
   };
 
   const [isAddMessModalOpen, setIsAddMessModalOpen] = useState(false);
+  const [showMessPassword, setShowMessPassword] = useState(false);
   const [newMessData, setNewMessData] = useState({ 
     name: '', 
     owner: '', 
     location: '', 
-    phone: '', 
+    phone: '+91 ', 
     email: '',
-    username: '',
-    password: ''
+    password: '',
+    googleMapUrl: ''
   });
 
   const handleToggleMessStatus = async (messId, newStatus) => {
@@ -112,6 +148,30 @@ function AdminPanel() {
 
   const handleAddMess = async (e) => {
     e.preventDefault();
+
+    // Basic validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newMessData.email)) {
+      alert("Please enter a valid email address.");
+      return;
+    }
+
+    // Strip optional +91 or 91 country code to validate a 10-digit base number
+    let basePhone = newMessData.phone.replace(/\s+/g, '');
+    if (basePhone.startsWith('+91')) {
+      basePhone = basePhone.substring(3);
+    } else if (basePhone.startsWith('91') && basePhone.length > 10) {
+      basePhone = basePhone.substring(2);
+    }
+    basePhone = basePhone.replace(/\D/g, ''); // Remove non-digits
+
+    const phoneRegex = /^[0-9]{10}$/;
+    if (!phoneRegex.test(basePhone)) {
+      alert("Please enter a valid 10-digit phone number.");
+      return;
+    }
+    const cleanPhone = `+91 ${basePhone}`;
+
     try {
       const response = await fetch('http://localhost:5000/api/admin/add-mess-owner', {
         method: 'POST',
@@ -121,11 +181,11 @@ function AdminPanel() {
         body: JSON.stringify({
           name: newMessData.owner,
           email: newMessData.email,
-          username: newMessData.username,
           password: newMessData.password,
-          phone: newMessData.phone,
+          phone: cleanPhone,
           mess_name: newMessData.name,
-          address: newMessData.location
+          address: newMessData.location,
+          googleMapUrl: newMessData.googleMapUrl
         }),
       });
 
@@ -142,6 +202,7 @@ function AdminPanel() {
           status: 'Active',
           users: 0,
           joined: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
+          rawJoined: new Date().toISOString(),
           rating: 0.0,
           complaints: 0
         }; 
@@ -156,12 +217,14 @@ function AdminPanel() {
           phone: data.user.phone,
           role: 'Mess Owner',
           status: 'Active',
-          joined: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
+          joined: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
+          rawJoined: new Date().toISOString()
         };
         setUsersList([newUser, ...usersList]);
 
         setIsAddMessModalOpen(false);
-        setNewMessData({ name: '', owner: '', location: '', phone: '', email: '', username: '', password: '' });
+        setShowMessPassword(false);
+        setNewMessData({ name: '', owner: '', location: '', phone: '+91 ', email: '', password: '', googleMapUrl: '' });
         alert('Mess Owner and Mess registered successfully!');
       } else {
         alert('Error: ' + data.message);
@@ -186,6 +249,22 @@ function AdminPanel() {
     }
   };
 
+  const handleDeleteUser = async (userId) => {
+    if (!window.confirm('Are you sure you want to delete this user permanently? This will also remove all their associated subscriptions, tickets, and messes.')) {
+      return;
+    }
+    try {
+      await axios.delete(`http://localhost:5000/api/admin/users/${userId}`);
+      setUsersList(prev => prev.filter(u => u.id !== userId));
+      setMessesList(prev => prev.filter(m => m.id !== userId));
+      setSelectedMess(null);
+      setSelectedUser(null);
+      alert('User and all associated data deleted successfully.');
+    } catch (error) {
+      alert('Error deleting user: ' + (error.response?.data?.message || error.message));
+    }
+  };
+
 
   const handleUpdateTicketStatus = async (ticketId, newStatus) => {
     try {
@@ -200,7 +279,7 @@ function AdminPanel() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('user');
+    sessionStorage.removeItem('user');
     navigate('/login');
   };
 
@@ -224,18 +303,7 @@ function AdminPanel() {
   const [finStatusFilter, setFinStatusFilter] = useState('All');
   const [selectedTx, setSelectedTx] = useState(null);
 
-  // Admin Profile State
-  const [adminUser, setAdminUser] = useState({
-    name: 'System Admin',
-    email: 'admin123',
-    phone: '+91 00000 00000',
-    role: 'Platform Administrator',
-    lastLogin: 'Just now',
-    location: 'Main HQ',
-    joined: 'May 2026'
-  });
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [editAdminData, setEditAdminData] = useState({ ...adminUser });
+
 
   const mockTransactions = [];
 
@@ -282,22 +350,35 @@ function AdminPanel() {
 
   // Views
   const recentActivity = useMemo(() => {
-    const activities = [];
-    
     // Sort combined users and messes by ID/Time (approximation for now)
     const combined = [
       ...usersList.map(u => ({ ...u, type: 'user' })),
       ...messesList.map(m => ({ ...m, type: 'mess' }))
     ].sort((a, b) => b.id - a.id).slice(0, 5);
 
+    const formatDateTime = (dateStr) => {
+      if (!dateStr) return 'N/A';
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 'N/A';
+      return d.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    };
+
     return combined.map(item => {
+      const timeVal = formatDateTime(item.rawJoined);
       if (item.type === 'user') {
         return { 
           icon: 'users', 
           color: '#1976D2', 
           bg: '#E3F2FD', 
           text: `New ${item.role} registered: ${item.name}`, 
-          time: item.joined 
+          time: timeVal 
         };
       } else {
         return { 
@@ -305,11 +386,20 @@ function AdminPanel() {
           color: '#F26B2E', 
           bg: '#FFF0E6', 
           text: `New Mess: ${item.name} (${item.owner})`, 
-          time: item.joined 
+          time: timeVal 
         };
       }
     });
   }, [usersList, messesList]);
+  const newRegistrationsCount = useMemo(() => {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    return usersList.filter(u => {
+      if (!u.rawJoined) return false;
+      return new Date(u.rawJoined) >= sevenDaysAgo;
+    }).length;
+  }, [usersList]);
 
   const quickActions = [
     { icon: 'utensils', label: 'Add New Mess', color: '#F26B2E', bg: '#FFF0E6', tab: 'Mess Management' },
@@ -329,45 +419,51 @@ function AdminPanel() {
 
       {/* KPI Cards */}
       <div className="admin-stats-grid">
-        <div className="admin-stat-box">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-            <span></span>
-            <div className="stat-icon-wrap icon-orange"><Icon name="utensils" /></div>
+        <div className="admin-stat-box-row">
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <div className="stat-label">Total Messes</div>
+            <div className="stat-value">{messesList.length}</div>
+            <div style={{ marginTop: 10, fontSize: 11, color: '#9E9E9E' }}>
+              {messesList.filter(m => m.status === 'Active').length} active · {messesList.filter(m => m.status === 'Blocked').length} blocked · {messesList.filter(m => m.status === 'Pending').length} pending
+            </div>
           </div>
-          <div className="stat-label">Total Messes</div>
-          <div className="stat-value">{messesList.length}</div>
-          <div style={{ marginTop: 10, fontSize: 11, color: '#9E9E9E' }}>
-            {messesList.filter(m => m.status === 'Active').length} active · {messesList.filter(m => m.status === 'Blocked').length} blocked · {messesList.filter(m => m.status === 'Pending').length} pending
-          </div>
+          <div className="stat-icon-wrap icon-orange"><Icon name="utensils" /></div>
         </div>
-        <div className="admin-stat-box">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-            <span></span>
-            <div className="stat-icon-wrap icon-green"><Icon name="users" /></div>
+        <div className="admin-stat-box-row">
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <div className="stat-label">Total Users</div>
+            <div className="stat-value">{usersList.length}</div>
+            <div style={{ marginTop: 10, fontSize: 11, color: '#9E9E9E' }}>
+              {usersList.filter(u => u.role === 'Student').length} Students · {usersList.filter(u => u.role === 'Mess Owner').length} Owners
+            </div>
           </div>
-          <div className="stat-label">Total Users</div>
-          <div className="stat-value">{usersList.length}</div>
-          <div style={{ marginTop: 10, fontSize: 11, color: '#9E9E9E' }}>
-            {usersList.filter(u => u.role === 'Student').length} Students · {usersList.filter(u => u.role === 'Mess Owner').length} Owners
-          </div>
+          <div className="stat-icon-wrap icon-green"><Icon name="users" /></div>
         </div>
-        <div className="admin-stat-box">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-            <div>{messesList.filter(m => m.status === 'Pending').length > 0 && <span style={{ fontSize: 11, color: '#9C27B0', fontWeight: 700, background: '#F3E5F5', padding: '4px 8px', borderRadius: 12 }}>Action needed</span>}</div>
-            <div className="stat-icon-wrap icon-purple"><Icon name="file-text" /></div>
+        <div className="admin-stat-box-row">
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            {messesList.filter(m => m.status === 'Pending').length > 0 && (
+              <span style={{ fontSize: 11, color: '#9C27B0', fontWeight: 700, background: '#F3E5F5', padding: '4px 8px', borderRadius: 12, marginBottom: 8, display: 'inline-block' }}>
+                Action needed
+              </span>
+            )}
+            <div className="stat-label">Pending Approvals</div>
+            <div className="stat-value">{messesList.filter(m => m.status === 'Pending').length}</div>
+            <button className="btn-stat-action" style={{ background: '#9C27B0', marginTop: 10, width: 'auto', padding: '6px 16px' }} onClick={() => setActiveTab('Mess Management')}>Review Now</button>
           </div>
-          <div className="stat-label">Pending Approvals</div>
-          <div className="stat-value">{messesList.filter(m => m.status === 'Pending').length}</div>
-          <button className="btn-stat-action" style={{ background: '#9C27B0', marginTop: 10 }} onClick={() => setActiveTab('Mess Management')}>Review Now</button>
+          <div className="stat-icon-wrap icon-purple"><Icon name="file-text" /></div>
         </div>
-        <div className="admin-stat-box">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-            <div>{ticketsList.filter(t => t.status === 'Open').length > 0 && <span style={{ fontSize: 11, color: '#FF9800', fontWeight: 700, background: '#FFF3E0', padding: '4px 8px', borderRadius: 12 }}>{ticketsList.filter(t => t.status === 'Open').length} Open</span>}</div>
-            <div className="stat-icon-wrap icon-peach"><Icon name="message-square" /></div>
+        <div className="admin-stat-box-row">
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            {ticketsList.filter(t => t.status === 'Open').length > 0 && (
+              <span style={{ fontSize: 11, color: '#FF9800', fontWeight: 700, background: '#FFF3E0', padding: '4px 8px', borderRadius: 12, marginBottom: 8, display: 'inline-block' }}>
+                {ticketsList.filter(t => t.status === 'Open').length} Open
+              </span>
+            )}
+            <div className="stat-label">Support Tickets</div>
+            <div className="stat-value">{ticketsList.length}</div>
+            <button className="btn-stat-action" style={{ marginTop: 10, width: 'auto', padding: '6px 16px' }} onClick={() => setActiveTab('Feedback/Tickets')}>Resolve Now</button>
           </div>
-          <div className="stat-label">Support Tickets</div>
-          <div className="stat-value">{ticketsList.length}</div>
-          <button className="btn-stat-action" style={{ marginTop: 10 }} onClick={() => setActiveTab('Feedback/Tickets')}>Resolve Now</button>
+          <div className="stat-icon-wrap icon-peach"><Icon name="message-square" /></div>
         </div>
       </div>
 
@@ -399,7 +495,7 @@ function AdminPanel() {
                 <tr key={m.id}>
                   <td style={{ fontWeight: 600 }}><Icon name="utensils" size={13}/> <span style={{ marginLeft: 6 }}>{m.name}</span></td>
                   <td style={{ color: '#7E7E7E', fontSize: 13 }}>{m.owner}</td>
-                  <td style={{ color: '#9E9E9E', fontSize: 12 }}>📍 {m.location}</td>
+                  <td style={{ color: '#9E9E9E', fontSize: 12 }}>{m.location}</td>
                   <td className="text-right">
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                       <button className="btn-sm btn-success" onClick={() => handleToggleMessStatus(m.id, 'Active')}>Approve</button>
@@ -492,13 +588,6 @@ function AdminPanel() {
           </div>
           <div className="stat-icon-wrap icon-red"><Icon name="x-circle" /></div>
         </div>
-        <div className="admin-stat-box-sm">
-          <div>
-            <div className="stat-label">Top Rated (4.5+)</div>
-            <div className="stat-value">{messesList.filter(m => m.rating >= 4.5).length}</div>
-          </div>
-          <div className="stat-icon-wrap icon-yellow"><Icon name="star" /></div>
-        </div>
       </div>
 
       <div className="admin-table-panel">
@@ -550,15 +639,15 @@ function AdminPanel() {
                   </div>
                 </td>
                 <td style={{ fontSize: 13, color: '#555' }}>{mess.owner}</td>
-                <td style={{ color: '#9E9E9E', fontSize: 12 }}>📍 {mess.location}</td>
+                <td style={{ color: '#9E9E9E', fontSize: 12 }}>{mess.location}</td>
                 <td>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontWeight: 700, fontSize: 13, color: mess.rating >= 4.5 ? '#388E3C' : mess.rating >= 3.5 ? '#E65100' : '#C62828' }}>
-                    ⭐ {mess.rating}
+                  <span style={{ fontWeight: 700, fontSize: 13, color: mess.rating >= 4.5 ? '#388E3C' : mess.rating >= 3.5 ? '#E65100' : '#C62828' }}>
+                    {mess.rating}
                   </span>
                 </td>
                 <td>{getStatusPill(mess.status)}</td>
                 <td style={{ color: '#7E7E7E', fontSize: 13 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Icon name="users" size={13}/> {mess.users}</span>
+                  {mess.users}
                 </td>
                 <td className="text-right">
                   <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
@@ -566,16 +655,33 @@ function AdminPanel() {
                       <Icon name="eye" size={13}/> View
                     </button>
                     {mess.status !== 'Active' && (
-                      <button className="btn-sm btn-success" onClick={() => handleToggleMessStatus(mess.id, 'Active')}>Approve</button>
-                    )}
-                    {mess.status === 'Active' && (
-                      <button className="btn-sm" style={{ background: '#FFF3E0', color: '#E65100', border: '1px solid #FFE0B2' }} onClick={() => handleToggleMessStatus(mess.id, 'Inactive')}>
-                        <Icon name="power" size={12}/> Disable
+                      <button className="btn-sm btn-success" onClick={() => handleToggleMessStatus(mess.id, 'Active')}>
+                        {mess.status === 'Blocked' ? 'Unblock' : 'Approve'}
                       </button>
                     )}
+
                     {mess.status !== 'Blocked' && (
                       <button className="btn-sm btn-danger" onClick={() => handleToggleMessStatus(mess.id, 'Blocked')}>Block</button>
                     )}
+                    <button 
+                      className="btn-sm btn-outline-danger" 
+                      onClick={() => handleDeleteUser(mess.id)}
+                      style={{ 
+                        padding: '4px 10px', 
+                        borderRadius: '6px', 
+                        border: '1px solid #FFCDD2', 
+                        background: '#FFF5F5', 
+                        color: '#D32F2F', 
+                        fontWeight: '600', 
+                        fontSize: '12px', 
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease'
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#FFEBEE'; e.currentTarget.style.borderColor = '#EF9A9A'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = '#FFF5F5'; e.currentTarget.style.borderColor = '#FFCDD2'; }}
+                    >
+                      Delete
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -629,8 +735,8 @@ function AdminPanel() {
           </div>
           <div className="admin-stat-box-sm">
             <div>
-              <div className="stat-label">New Registrations</div>
-              <div className="stat-value">112</div>
+              <div className="stat-label">New Registrations (7d)</div>
+              <div className="stat-value">{newRegistrationsCount}</div>
             </div>
             <div className="stat-icon-wrap icon-blue"><Icon name="trending-up" /></div>
           </div>
@@ -700,11 +806,25 @@ function AdminPanel() {
                   <td style={{ color: '#7E7E7E', fontSize: '13px' }}>{user.joined}</td>
                   <td className="text-right">
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                      {user.status === 'Active' ? (
-                        <button className="btn-sm btn-danger" onClick={() => handleToggleUserStatus(user.id)}>Block</button>
-                      ) : (
-                        <button className="btn-sm btn-success" onClick={() => handleToggleUserStatus(user.id)}>Unblock</button>
-                      )}
+                      <button 
+                        className="btn-sm btn-outline-danger" 
+                        onClick={() => handleDeleteUser(user.id)}
+                        style={{ 
+                          padding: '4px 10px', 
+                          borderRadius: '6px', 
+                          border: '1px solid #FFCDD2', 
+                          background: '#FFF5F5', 
+                          color: '#D32F2F', 
+                          fontWeight: '600', 
+                          fontSize: '12px', 
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#FFEBEE'; e.currentTarget.style.borderColor = '#EF9A9A'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#FFF5F5'; e.currentTarget.style.borderColor = '#FFCDD2'; }}
+                      >
+                        Delete
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -825,37 +945,23 @@ function AdminPanel() {
             <thead>
               <tr>
                 <th>Ticket ID</th>
-                <th>User / Mess</th>
+                <th>User Name</th>
                 <th>Subject</th>
-                <th>Category</th>
                 <th>Status</th>
-                <th>Priority</th>
-                <th className="text-right">Actions</th>
+                <th style={{ textAlign: 'center' }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: '40px 24px', color: '#9E9E9E' }}>No tickets match your filters.</td></tr>
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '40px 24px', color: '#9E9E9E' }}>No feedback match your search.</td></tr>
               ) : filtered.map(t => (
                 <tr key={t.id}>
                   <td style={{ fontWeight: 600, color: '#1A1A1A', fontSize: 13 }}>{t.id}</td>
-                  <td style={{ fontSize: 13 }}>
-                    <div style={{ fontWeight: 600 }}>{t.user}</div>
-                    <div style={{ color: '#9E9E9E', fontSize: 11 }}>{t.mess}</div>
-                  </td>
-                  <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.subject}</td>
-                  <td style={{ color: '#7E7E7E', fontSize: 12 }}>{t.category}</td>
+                  <td style={{ fontWeight: 600, fontSize: 13 }}>{t.user}</td>
+                  <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{t.subject}</td>
                   <td>{getStatusBadge(t.status)}</td>
-                  <td>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: getPriorityColor(t.priority) }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: getPriorityColor(t.priority) }}></span>
-                      {t.priority}
-                    </span>
-                  </td>
-                  <td className="text-right">
-                    <button className="btn-sm btn-outline-dark" onClick={() => setSelectedTicket(t)}>
-                      Manage
-                    </button>
+                  <td style={{ textAlign: 'center' }}>
+                    <button className="btn-sm btn-outline-dark" onClick={() => setSelectedTicket(t)}>Manage</button>
                   </td>
                 </tr>
               ))}
@@ -884,7 +990,7 @@ function AdminPanel() {
                   <div style={{ fontSize: 12, color: '#9E9E9E', marginBottom: 4 }}>User Message</div>
                   <div style={{ fontSize: 14, color: '#1A1A1A', fontWeight: 600, marginBottom: 8 }}>{selectedTicket.subject}</div>
                   <div style={{ fontSize: 13, color: '#555', lineHeight: 1.5 }}>
-                    Hello, I'm facing an issue with the mess service today. The food was not cooked properly and was served cold. Please look into this as soon as possible.
+                    {selectedTicket.description || 'No additional details provided.'}
                   </div>
                 </div>
 
@@ -1201,14 +1307,14 @@ function AdminPanel() {
   const renderModal = () => {
     if (isAddMessModalOpen) {
       return (
-        <div className="admin-modal-overlay" onClick={() => setIsAddMessModalOpen(false)}>
+        <div className="admin-modal-overlay" onClick={() => { setIsAddMessModalOpen(false); setShowMessPassword(false); }}>
           <div className="admin-modal-content" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h2 className="modal-title">Add New Mess</h2>
                 <div className="modal-subtitle">Register a new mess onto the platform</div>
               </div>
-              <button className="modal-close-btn" onClick={() => setIsAddMessModalOpen(false)}><Icon name="x" size={20}/></button>
+              <button className="modal-close-btn" onClick={() => { setIsAddMessModalOpen(false); setShowMessPassword(false); }}><Icon name="x" size={20}/></button>
             </div>
             <form onSubmit={handleAddMess} className="modal-body-scroll" style={{ padding: 24 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1230,22 +1336,36 @@ function AdminPanel() {
                     <input type="text" required className="edit-input" placeholder="+91 00000 00000" value={newMessData.phone} onChange={e => setNewMessData({...newMessData, phone: e.target.value})} style={{ width: '100%', marginTop: 4 }} />
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                  <div>
-                    <label className="info-label">Username</label>
-                    <input type="text" required className="edit-input" placeholder="Choose a username" value={newMessData.username} onChange={e => setNewMessData({...newMessData, username: e.target.value})} style={{ width: '100%', marginTop: 4 }} />
-                  </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16 }}>
                   <div>
                     <label className="info-label">Password</label>
-                    <input type="password" required className="edit-input" placeholder="Enter password" value={newMessData.password} onChange={e => setNewMessData({...newMessData, password: e.target.value})} style={{ width: '100%', marginTop: 4 }} />
+                    <div className="password-input-wrapper" style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
+                      <input 
+                        type={showMessPassword ? "text" : "password"} 
+                        required 
+                        className="edit-input" 
+                        placeholder="Enter password" 
+                        value={newMessData.password} 
+                        onChange={e => setNewMessData({...newMessData, password: e.target.value})} 
+                        style={{ width: '100%', paddingRight: '40px' }} 
+                      />
+                      <div className="eye-icon" onClick={() => setShowMessPassword(!showMessPassword)} style={{ position: 'absolute', right: '14px', cursor: 'pointer', color: '#a0a0a0', display: 'flex', alignItems: 'center' }}>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style={{ width: '18px', height: '18px', stroke: 'currentColor', strokeWidth: 2, fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' }}>
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                          <circle cx="12" cy="12" r="3"></circle>
+                          {showMessPassword && <line x1="2" y1="2" x2="22" y2="22" stroke="currentColor" />}
+                        </svg>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div>
-                  <label className="info-label">Physical Location</label>
+                  <label className="info-label">Mess Location</label>
                   <input type="text" required className="edit-input" placeholder="Area, City" value={newMessData.location} onChange={e => setNewMessData({...newMessData, location: e.target.value})} style={{ width: '100%', marginTop: 4 }} />
                 </div>
+
                 <div style={{ marginTop: 12, display: 'flex', gap: 12 }}>
-                  <button type="button" className="btn-outline-dark btn-sm" style={{ flex: 1 }} onClick={() => setIsAddMessModalOpen(false)}>Cancel</button>
+                  <button type="button" className="btn-outline-dark btn-sm" style={{ flex: 1 }} onClick={() => { setIsAddMessModalOpen(false); setShowMessPassword(false); }}>Cancel</button>
                   <button type="submit" className="btn-primary-sm" style={{ flex: 1 }}>Register Mess</button>
                 </div>
               </div>
@@ -1277,11 +1397,11 @@ function AdminPanel() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
                   <div>
                     <div className="info-label">Email Address</div>
-                    <div className="info-value" style={{ fontSize: 14 }}>✉️ {selectedUser.email}</div>
+                    <div className="info-value" style={{ fontSize: 14 }}>{selectedUser.email}</div>
                   </div>
                   <div>
                     <div className="info-label">Phone Number</div>
-                    <div className="info-value" style={{ fontSize: 14 }}>📞 {selectedUser.phone}</div>
+                    <div className="info-value" style={{ fontSize: 14 }}>{selectedUser.phone}</div>
                   </div>
                   <div>
                     <div className="info-label">Account Status</div>
@@ -1300,25 +1420,31 @@ function AdminPanel() {
     }
 
     if (!selectedMess) return null;
+
+    const messReviews = selectedMessReviews;
+    const messComplaints = ticketsList.filter(t => t.mess === selectedMess.name);
+    const avgRating = messReviews.length > 0 
+      ? (messReviews.reduce((acc, r) => acc + r.rating, 0) / messReviews.length).toFixed(1)
+      : selectedMess.rating;
+
     return (
-      <div className="admin-modal-overlay">
-        <div className="admin-modal-content">
+      <div className="admin-modal-overlay" onClick={() => { setSelectedMess(null); setActiveModalTab('Overview'); }}>
+        <div className="admin-modal-content" onClick={e => e.stopPropagation()}>
           <div className="modal-header">
              <div>
-                <h2 className="modal-title">{selectedMess.name}</h2>
-                <div className="modal-subtitle">View complete mess details, reviews, and complaints</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                   <h2 className="modal-title" style={{ margin: 0 }}>{selectedMess.name}</h2>
                    {getStatusPill(selectedMess.status)}
-                   <span style={{ fontSize: '13px', fontWeight: 600, color: '#1A1A1A' }}>⭐ {selectedMess.rating} <span style={{ color: '#7E7E7E', fontWeight: 400 }}>({selectedMess.users} users)</span></span>
                 </div>
+                <div className="modal-subtitle" style={{ marginTop: 4 }}>View complete mess details, reviews, and complaints</div>
              </div>
              <button className="modal-close-btn" onClick={() => { setSelectedMess(null); setActiveModalTab('Overview'); }}><Icon name="x" size={20}/></button>
           </div>
           
           <div className="modal-tabs">
              <div className={`modal-tab ${activeModalTab === 'Overview' ? 'active' : ''}`} onClick={() => setActiveModalTab('Overview')}>Overview</div>
-             <div className={`modal-tab ${activeModalTab === 'Reviews' ? 'active' : ''}`} onClick={() => setActiveModalTab('Reviews')}>Reviews <span className="tab-badge blue-badge">0</span></div>
-             <div className={`modal-tab ${activeModalTab === 'Complaints' ? 'active' : ''}`} onClick={() => setActiveModalTab('Complaints')}>Complaints <span className="tab-badge orange-badge">{selectedMess.complaints}</span></div>
+             <div className={`modal-tab ${activeModalTab === 'Reviews' ? 'active' : ''}`} onClick={() => setActiveModalTab('Reviews')}>Reviews <span className="tab-badge blue-badge">{messReviews.length}</span></div>
+             <div className={`modal-tab ${activeModalTab === 'Complaints' ? 'active' : ''}`} onClick={() => setActiveModalTab('Complaints')}>Complaints <span className="tab-badge orange-badge">{messComplaints.length}</span></div>
           </div>
 
           <div className="modal-body-scroll">
@@ -1334,12 +1460,12 @@ function AdminPanel() {
                    
                    <div className="info-block">
                      <div className="info-label">Contact Number</div>
-                     <div className="info-value">📞 {selectedMess.phone}</div>
+                     <div className="info-value">{selectedMess.phone}</div>
                    </div>
 
                    <div className="info-block">
                      <div className="info-label">Email Address</div>
-                     <div className="info-value">✉️ {selectedMess.email}</div>
+                     <div className="info-value">{selectedMess.email}</div>
                    </div>
 
                    <div className="info-block">
@@ -1349,7 +1475,7 @@ function AdminPanel() {
 
                    <div className="info-block">
                      <div className="info-label">Address</div>
-                     <div className="info-value">📍 {selectedMess.location}</div>
+                     <div className="info-value">{selectedMess.location}</div>
                    </div>
                 </div>
 
@@ -1363,17 +1489,17 @@ function AdminPanel() {
                       </div>
                       <div className="perf-stat-box perf-yellow">
                          <Icon name="star" size={20} />
-                         <div className="perf-val">0</div>
-                         <div className="perf-lbl">Rating</div>
+                         <div className="perf-val">{avgRating}</div>
+                         <div className="perf-lbl">Avg Rating</div>
                       </div>
                       <div className="perf-stat-box perf-green">
                          <span style={{ fontSize: '20px' }}>👍</span>
-                         <div className="perf-val">0</div>
+                         <div className="perf-val">{messReviews.length}</div>
                          <div className="perf-lbl">Reviews</div>
                       </div>
                       <div className="perf-stat-box perf-orange">
                          <Icon name="message-square" size={20} />
-                         <div className="perf-val">0</div>
+                         <div className="perf-val">{messComplaints.length}</div>
                          <div className="perf-lbl">Complaints</div>
                       </div>
                    </div>
@@ -1386,11 +1512,22 @@ function AdminPanel() {
                   <p style={{ fontSize: '12px', color: '#7E7E7E', margin: '0 0 16px' }}>Manage the operational status of this mess. These actions will affect the mess's visibility and accessibility to users.</p>
                   
                   <div style={{ display: 'flex', gap: '16px' }}>
-                     <button className="btn-outline-danger btn-sm" style={{ flex: 1, justifyContent: 'center' }}>
-                        <Icon name="power" size={14} /> Disable Mess
-                     </button>
-                     <button className="btn-outline-danger btn-sm" style={{ flex: 1, justifyContent: 'center' }}>
-                        <Icon name="x-circle" size={14} /> Block Mess
+                     {selectedMess.status !== 'Active' && (
+                        <button className="btn-outline-dark btn-sm" style={{ flex: 1, justifyContent: 'center', background: '#388E3C', color: 'white', border: 'none' }} onClick={() => handleToggleMessStatus(selectedMess.id, 'Active')}>
+                           {selectedMess.status === 'Blocked' ? 'Unblock Mess' : 'Approve Mess'}
+                        </button>
+                     )}
+                     {selectedMess.status !== 'Blocked' && (
+                        <button className="btn-outline-danger btn-sm" style={{ flex: 1, justifyContent: 'center' }} onClick={() => handleToggleMessStatus(selectedMess.id, 'Blocked')}>
+                           <Icon name="x-circle" size={14} /> Block Mess
+                        </button>
+                     )}
+                     <button 
+                        className="btn-sm btn-danger" 
+                        style={{ flex: 1, justifyContent: 'center', background: '#D32F2F', color: 'white', border: 'none', padding: '10px 16px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }} 
+                        onClick={() => handleDeleteUser(selectedMess.id)}
+                     >
+                        <Icon name="trash" size={14} /> Delete Mess
                      </button>
                   </div>
                 </div>
@@ -1399,108 +1536,58 @@ function AdminPanel() {
 
             {activeModalTab === 'Reviews' && (
               <div className="modal-section">
-                <div style={{ textAlign: 'center', padding: '40px 24px', color: '#9E9E9E' }}>No reviews yet for this mess.</div>
+                {messReviews.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px 24px', color: '#9E9E9E' }}>No reviews yet for this mess.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {messReviews.map(r => (
+                      <div key={r.id} style={{ padding: 16, border: '1px solid #EEE', borderRadius: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <span style={{ fontWeight: 700 }}>{r.user_name}</span>
+                          <span style={{ color: '#FF9800' }}>⭐ {r.rating}</span>
+                        </div>
+                        <p style={{ fontSize: 13, color: '#555', margin: 0 }}>{r.comment}</p>
+                        <div style={{ fontSize: 11, color: '#9E9E9E', marginTop: 8 }}>{new Date(r.created_at).toLocaleDateString()}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             {activeModalTab === 'Complaints' && (
               <div className="modal-section">
-                <div style={{ textAlign: 'center', padding: '40px 24px', color: '#9E9E9E' }}>No complaints filed for this mess.</div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderProfile = () => {
-    const handleEditToggle = () => {
-      if (isEditingProfile) {
-        setAdminUser({ ...editAdminData });
-      } else {
-        setEditAdminData({ ...adminUser });
-      }
-      setIsEditingProfile(!isEditingProfile);
-    };
-
-    return (
-      <div className="admin-view">
-        <div className="admin-header-row">
-          <div>
-            <h1 className="admin-title-sm">Admin Profile</h1>
-            <p className="table-subtitle" style={{ marginTop: 4 }}>Manage your account settings and personal information.</p>
-          </div>
-          <div style={{ display: 'flex', gap: 12 }}>
-            {isEditingProfile && (
-              <button className="btn-outline-dark btn-sm" onClick={() => setIsEditingProfile(false)}>Cancel</button>
-            )}
-            <button className="btn-primary-sm" onClick={handleEditToggle}>
-              {isEditingProfile ? 'Save Changes' : 'Edit Profile'}
-            </button>
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 24, marginTop: 24 }}>
-          {/* Main Profile Card */}
-          <div className="admin-table-panel" style={{ padding: 32 }}>
-            <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start' }}>
-              <div className="admin-avatar" style={{ width: 100, height: 100, fontSize: 36, flexShrink: 0 }}>
-                {adminUser.name.split(' ').map(n => n[0]).join('')}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-                  <div>
-                    {isEditingProfile ? (
-                      <input 
-                        type="text" 
-                        value={editAdminData.name} 
-                        onChange={e => setEditAdminData({ ...editAdminData, name: e.target.value })}
-                        style={{ fontSize: 24, fontWeight: 800, border: '1px solid #DDD', borderRadius: 8, padding: '4px 12px', width: '100%', marginBottom: 8 }}
-                      />
-                    ) : (
-                      <h2 style={{ fontSize: 28, fontWeight: 800, color: '#1A1A1A', marginBottom: 4 }}>{adminUser.name}</h2>
-                    )}
-                    <div style={{ fontSize: 14, color: '#F26B2E', fontWeight: 700 }}>{adminUser.role}</div>
+                {messComplaints.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px 24px', color: '#9E9E9E' }}>No complaints filed for this mess.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {messComplaints.map(t => (
+                      <div key={t.id} style={{ padding: 16, border: '1px solid #EEE', borderRadius: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <span style={{ fontWeight: 700 }}>{t.subject}</span>
+                          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#F5F5F5' }}>{t.status}</span>
+                        </div>
+                        <p style={{ fontSize: 13, color: '#555', margin: 0 }}>{t.user}</p>
+                        <div style={{ fontSize: 11, color: '#9E9E9E', marginTop: 8 }}>{t.date}</div>
+                      </div>
+                    ))}
                   </div>
-                  <span className="status-pill active-pill">Active Session</span>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px 40px' }}>
-                  {[
-                    ['Email Address', 'email', '✉️'],
-                    ['Phone Number', 'phone', '📞'],
-                    ['Joined Platform', 'joined', '🗓️', true], // Read-only
-                    ['Location', 'location', '📍'],
-                  ].map(([label, key, icon, readOnly]) => (
-                    <div key={label}>
-                      <div className="info-label">{label}</div>
-                      {isEditingProfile && !readOnly ? (
-                        <input 
-                          type="text" 
-                          value={editAdminData[key]} 
-                          onChange={e => setEditAdminData({ ...editAdminData, [key]: e.target.value })}
-                          style={{ fontSize: 14, border: '1px solid #DDD', borderRadius: 6, padding: '6px 10px', width: '100%', marginTop: 4 }}
-                        />
-                      ) : (
-                        <div className="info-value" style={{ fontSize: 15 }}>{icon} {adminUser[key]}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                )}
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
     );
   };
+
+
 
   return (
     <div className="admin-layout">
       {/* Sidebar */}
       <aside className="admin-sidebar">
-        <div className="admin-sidebar-header" style={{ padding: '32px 24px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid #F0F0F0' }}>
+        <div className="admin-sidebar-header" style={{ padding: '32px 24px', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 12, borderBottom: '1px solid #F0F0F0' }}>
           <div style={{ width: 32, height: 32, backgroundColor: '#F26B2E', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 12, color: 'black' }}>GS</div>
           <div>
             <div style={{ fontSize: 20, fontWeight: 800, color: '#1A1A1A', lineHeight: 1 }}>GrubSpot</div>
@@ -1508,7 +1595,7 @@ function AdminPanel() {
           </div>
         </div>
 
-        <nav className="admin-nav">
+        <nav className="admin-nav" style={{ padding: '32px 16px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'stretch', justifyContent: 'flex-start' }}>
           {navItems.map((item) => (
             <div 
               key={item.id} 
@@ -1525,7 +1612,7 @@ function AdminPanel() {
         </nav>
 
         <div className="admin-sidebar-footer">
-          <div className="admin-user-box" onClick={() => setActiveTab('Profile')} style={{ background: activeTab === 'Profile' ? '#FFF0E6' : 'transparent', borderRadius: '10px' }}>
+          <div className="admin-user-box" style={{ background: 'transparent', borderRadius: '10px' }}>
              <div className="admin-avatar">AD</div>
              <div>
                <div className="admin-username">Admin User</div>
@@ -1546,7 +1633,7 @@ function AdminPanel() {
          {activeTab === 'User Management' && renderUserManagement()}
          {activeTab === 'Financials' && renderFinancials()}
          {activeTab === 'Feedback/Tickets' && renderFeedbackTickets()}
-         {activeTab === 'Profile' && renderProfile()}
+
       </main>
 
       {renderModal()}

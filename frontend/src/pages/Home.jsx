@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
+import { getUserCoords, getDistanceToMess, getDistanceFromCoords, parseDistance, requestUserLocation } from '../utils/location';
 
 function Home() {
   const [activeFilter, setActiveFilter] = useState('All');
@@ -14,7 +15,12 @@ function Home() {
   useEffect(() => {
     const saved = JSON.parse(localStorage.getItem('savedMesses') || '[]');
     setSavedMesses(saved);
-    fetchMesses();
+    // Request location first so it's ready when fetchMesses runs
+    const init = async () => {
+      await requestUserLocation();
+      fetchMesses();
+    };
+    init();
   }, []);
 
   const fetchMesses = async () => {
@@ -23,34 +29,50 @@ function Home() {
       if (res.data.status === 'success') {
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const today = days[new Date().getDay()];
-        console.log('Fetching for today:', today);
         
-        setMesses(res.data.messes.map(m => {
+        const mapped = res.data.messes.map(m => {
           const dbMenu = m.menu_data ? m.menu_data[today] : null;
           const details = m.details || {};
-          console.log(`Mess: ${m.mess_name}, Menu for ${today}:`, dbMenu);
-          
           const specials = dbMenu ? [
             ...(dbMenu.breakfast || []).slice(0, 1).map(i => i.name),
             ...(dbMenu.lunch || []).slice(0, 1).map(i => i.name)
           ].filter(Boolean) : [];
-
           const totalPrice = details.subscriptionPlans?.oneMonth || 0;
-
           return {
             id: m.id,
             name: m.mess_name || "New Mess",
             owner: m.name,
-            rating: details.avgRating || "0.0",
-            reviews: details.totalReviews || 0,
-            distance: "N/A",
+            rating: Number(m.avg_rating).toFixed(1) || details.avgRating || "0.0",
+            reviews: m.total_reviews || details.totalReviews || 0,
+            distance: 'Calculating...',
             type: details.type || 'Standard',
             tag: details.tag || 'GENERAL',
             categories: specials.length > 0 ? specials : ['Menu not set'],
-            price: totalPrice > 0 ? '₹' + totalPrice.toLocaleString('en-IN') : 'Price Not Set',
-            address: m.address || "Location not set"
+            price: totalPrice > 0 ? '₹' + totalPrice.toLocaleString('en-IN') : null,
+            address: m.address || "Location not set",
+            latitude: m.latitude,
+            longitude: m.longitude,
+            image: details.image || null
           };
-        }));
+        });
+        setMesses(mapped);
+
+        // Compute distances — use stored lat/lng directly if available (instant),
+        // otherwise fall back to Nominatim geocoding of the address string.
+        const userCoords = getUserCoords();
+        if (userCoords) {
+          const withDistances = await Promise.all(
+            mapped.map(async (m) => {
+              const direct = getDistanceFromCoords(userCoords, m.latitude, m.longitude);
+              const distance = direct !== null ? direct : await getDistanceToMess(userCoords, m.address);
+              return { ...m, distance };
+            })
+          );
+          withDistances.sort((a, b) => parseDistance(a.distance) - parseDistance(b.distance));
+          setMesses(withDistances);
+        } else {
+          setMesses(mapped.map(m => ({ ...m, distance: 'Not calculated' })));
+        }
       }
     } catch (error) {
       console.error('Error fetching messes:', error);
@@ -60,9 +82,8 @@ function Home() {
   };
 
   useEffect(() => {
-    console.log('Current Day:', ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()]);
-    console.log('Messes Data:', messes);
-  }, [messes]);
+    // Re-calculate distances if user location becomes available after load
+  }, []);
 
   const toggleSaveMess = (id, e) => {
     e.stopPropagation();
@@ -76,12 +97,13 @@ function Home() {
     localStorage.setItem('savedMesses', JSON.stringify(updated));
   };
 
-  const filters = ['All', 'South Indian', 'North Indian', 'Veg Only', 'Veg & Non-Veg'];
+  const filters = ['All', 'South Indian', 'North Indian', 'Veg', 'Non-Veg', 'Veg & Non-Veg'];
 
   const filteredMesses = messes.filter(mess => {
     if (activeFilter === 'All') return true;
-    if (activeFilter === 'Veg Only') return mess.tag === 'VEG';
-    if (activeFilter === 'Veg & Non-Veg') return true;
+    if (activeFilter === 'Veg') return mess.tag?.toLowerCase() === 'veg';
+    if (activeFilter === 'Non-Veg') return mess.tag?.toLowerCase() === 'non-veg';
+    if (activeFilter === 'Veg & Non-Veg') return mess.tag?.toLowerCase().includes('non-veg') && mess.tag?.toLowerCase().includes('veg');
     if (activeFilter === 'South Indian' || activeFilter === 'North Indian') return mess.type === activeFilter;
     return true;
   });
@@ -113,15 +135,20 @@ function Home() {
       <div className="container" style={{ position: 'relative', zIndex: 10 }}>
         <div className="stats-grid">
           <div className="stat-card">
-            <span className="stat-number">20+</span>
+            <span className="stat-number">{messes.length || 0}</span>
             <span className="stat-label">Messes Listed</span>
           </div>
           <div className="stat-card">
-            <span className="stat-number">2,000+</span>
-            <span className="stat-label">Students Registered</span>
+            <span className="stat-number">{messes.reduce((acc, m) => acc + (parseInt(m.reviews) || 0), 0)}+</span>
+            <span className="stat-label">Total Reviews</span>
           </div>
           <div className="stat-card">
-            <span className="stat-number">★ 4.5</span>
+            <span className="stat-number">
+              ★ {messes.reduce((acc, m) => acc + (parseInt(m.reviews) || 0), 0) > 0 
+                ? (messes.reduce((acc, m) => acc + (parseFloat(m.rating) || 0) * (parseInt(m.reviews) || 0), 0) / 
+                   messes.reduce((acc, m) => acc + (parseInt(m.reviews) || 0), 0)).toFixed(1)
+                : "0.0"}
+            </span>
             <span className="stat-label">Average Rating</span>
           </div>
         </div>
@@ -149,8 +176,16 @@ function Home() {
         <div className="mess-grid">
           {messesToDisplay.map(mess => (
             <div key={mess.id} className="mess-card">
-              <div className="mess-image-placeholder">
-                <div className="mess-tag" style={{ background: mess.tag === 'VEG' ? '#4CAF50' : '#FF5252' }}>
+              <div 
+                className="mess-image-placeholder"
+                style={{
+                  backgroundImage: mess.image ? `url(${mess.image})` : 'none',
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  position: 'relative'
+                }}
+              >
+                <div className={`mess-tag ${mess.tag && mess.tag.toLowerCase() === 'veg' ? 'veg' : (mess.tag && mess.tag.toLowerCase().includes('non-veg') ? 'non-veg' : '')}`}>
                   {mess.tag}
                 </div>
                 <div 
@@ -194,7 +229,7 @@ function Home() {
 
                 <div className="mess-footer">
                   <div className="mess-price">
-                    <span style={{ color: 'var(--orange)', fontSize: '18px', fontWeight: 'bold' }}>{mess.price}</span>/month
+                    {mess.price && <><span style={{ color: 'var(--orange)', fontSize: '18px', fontWeight: 'bold' }}>{mess.price}</span>/month</>}
                   </div>
                   <button className="subscribe-btn" onClick={() => navigate(`/mess/${mess.id}`)}>Subscribe</button>
                 </div>

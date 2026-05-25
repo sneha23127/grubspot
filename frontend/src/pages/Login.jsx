@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { requestUserLocation } from '../utils/location';
 
 function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [isRequestingLocation, setIsRequestingLocation] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -27,7 +30,11 @@ function Login() {
       return;
     }
 
+    // Clear any existing session before attempting a new login
+    sessionStorage.removeItem('user');
+
     try {
+      console.log(`Attempting login for: ${formData.identifier}`);
       const response = await axios.post('http://localhost:5000/api/login', {
         identifier: formData.identifier,
         password: formData.password
@@ -38,15 +45,20 @@ function Login() {
         alert(`Login successful! Welcome ${user.name}`);
         
         // Persist user info
-        localStorage.setItem('user', JSON.stringify(user));
-        
-        // Redirect based on role
-        if (user.role === 'admin') {
-          navigate('/admin');
-        } else if (user.role === 'mess_owner') {
-          navigate('/owner');
+        sessionStorage.setItem('user', JSON.stringify(user));
+
+        // Request location permission for student users
+        if (user.role === 'student') {
+          setShowLocationModal(true);
         } else {
-          navigate('/');
+          // Redirect based on role
+          if (user.role === 'admin') {
+            navigate('/admin');
+          } else if (user.role === 'mess_owner') {
+            navigate('/owner');
+          } else {
+            navigate('/');
+          }
         }
       }
     } catch (error) {
@@ -62,6 +74,135 @@ function Login() {
         alert("An error occurred during login. Please try again.");
       }
     }
+  };
+
+  const handleAllowLocation = async () => {
+    setIsRequestingLocation(true);
+    try {
+      await requestUserLocation();
+    } catch (err) {
+      console.warn("Location permission flow failed:", err);
+    } finally {
+      setIsRequestingLocation(false);
+      setShowLocationModal(false);
+      navigate('/');
+    }
+  };
+
+  const handleSkipLocation = () => {
+    setShowLocationModal(false);
+    navigate('/');
+  };
+
+  const renderLocationModal = () => {
+    if (!showLocationModal) return null;
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10000,
+        padding: '24px'
+      }}>
+        <div style={{
+          background: 'white',
+          maxWidth: '440px',
+          width: '100%',
+          borderRadius: '16px',
+          padding: '32px',
+          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15)',
+          textAlign: 'center',
+          animation: 'fadeIn 0.3s ease-out'
+        }}>
+          <div style={{
+            fontSize: '48px',
+            marginBottom: '16px'
+          }}>📍</div>
+          <h3 style={{
+            fontSize: '22px',
+            fontWeight: '800',
+            color: '#1A1A1A',
+            marginBottom: '12px'
+          }}>Allow Location Access</h3>
+          <p style={{
+            fontSize: '14px',
+            color: '#555',
+            lineHeight: '1.6',
+            marginBottom: '32px'
+          }}>
+            GrubSpot needs your location permission to show you nearby messes and calculate exact walking/travel distances for your meals.
+          </p>
+          
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px'
+          }}>
+            <button
+              onClick={handleAllowLocation}
+              disabled={isRequestingLocation}
+              style={{
+                width: '100%',
+                padding: '14px',
+                border: 'none',
+                background: '#F26B2E',
+                color: 'white',
+                fontSize: '15px',
+                fontWeight: '700',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
+            >
+              {isRequestingLocation ? (
+                <>
+                  <span style={{
+                    width: '16px',
+                    height: '16px',
+                    border: '2px solid rgba(255,255,255,0.3)',
+                    borderTop: '2px solid white',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite'
+                  }}></span>
+                  Requesting permission...
+                </>
+              ) : (
+                'Yes, Allow Location'
+              )}
+            </button>
+            <button
+              onClick={handleSkipLocation}
+              disabled={isRequestingLocation}
+              style={{
+                width: '100%',
+                padding: '14px',
+                border: '1px solid #E2E8F0',
+                background: 'transparent',
+                color: '#64748B',
+                fontSize: '15px',
+                fontWeight: '600',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+            >
+              Skip for now
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -121,9 +262,9 @@ function Login() {
 
             {/* Forgot Password */}
             <div style={{ textAlign: 'right', marginBottom: '24px' }}>
-              <a href="#forgot" style={{ fontSize: '12px', color: 'var(--text-light)', textDecoration: 'none' }}>
+              <Link to="/forgot-password" style={{ fontSize: '12px', color: 'var(--text-light)', textDecoration: 'none' }}>
                 Forgot Password?
-              </a>
+              </Link>
             </div>
 
             {/* Submit Button */}
@@ -138,6 +279,7 @@ function Login() {
           </form>
         </div>
       </div>
+      {renderLocationModal()}
     </div>
   );
 }

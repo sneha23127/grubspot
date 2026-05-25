@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
+import { getUserCoords, getDistanceToMess } from '../utils/location';
 
 function Compare() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -18,23 +19,38 @@ function Compare() {
     try {
       const res = await axios.get('http://localhost:5000/api/messes');
       if (res.data.status === 'success') {
-        setMesses(res.data.messes.map(m => ({
+        const mapped = res.data.messes.map(m => ({
           id: m.id,
           name: m.mess_name,
           owner: m.name,
-          rating: m.details?.avgRating || "0.0",
-          reviews: m.details?.totalReviews || 0,
-          distance: "N/A",
+          rating: Number(m.avg_rating).toFixed(1) || "0.0",
+          reviews: m.total_reviews || 0,
+          distance: "Calculating...",
           type: m.details?.type || 'Standard',
           tag: m.details?.tag || 'GENERAL',
-          price: m.details?.subscriptionPlans?.oneMonth ? '₹' + m.details.subscriptionPlans.oneMonth.toLocaleString('en-IN') : 'Price Not Set',
+          price: m.details?.subscriptionPlans?.oneMonthVeg ? '₹' + m.details.subscriptionPlans.oneMonthVeg.toLocaleString('en-IN') : 'Price Not Set',
           fullAddress: m.address || "Location not set",
           phone: m.phone || "Not set",
-          pricing: m.details?.pricing || { breakfast: 0, lunch: 0, dinner: 0 },
-          menu: m.details?.timings || { breakfast: "Not set", lunch: "Not set", dinner: "Not set" },
-          plans: m.details?.subscriptionPlans || { trial: 0, oneMonth: 0, threeMonth: 0 },
+          pricing: m.details?.pricing || { breakfast: 0, lunchVeg: 0, lunchNonVeg: 0, dinnerVeg: 0, dinnerNonVeg: 0 },
+          menu: m.details?.timings || { breakfast: "00:00 AM - 00:00 AM", lunch: "00:00 PM - 00:00 PM", dinner: "00:00 PM - 00:00 PM" },
+          plans: m.details?.subscriptionPlans || { trialVeg: 0, trialNonVeg: 0, oneMonthVeg: 0, oneMonthNonVeg: 0, threeMonthVeg: 0, threeMonthNonVeg: 0 },
           homeDelivery: m.details?.homeDelivery || false
-        })));
+        }));
+        setMesses(mapped);
+
+        // Compute distances for all messes in background
+        const userCoords = getUserCoords();
+        if (userCoords) {
+          const withDistances = await Promise.all(
+            mapped.map(async (m) => ({
+              ...m,
+              distance: await getDistanceToMess(userCoords, m.fullAddress)
+            }))
+          );
+          setMesses(withDistances);
+        } else {
+          setMesses(mapped.map(m => ({ ...m, distance: 'Not calculated' })));
+        }
       }
     } catch (error) {
       console.error('Error fetching messes:', error);
@@ -42,6 +58,19 @@ function Compare() {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    // Sync selected messes distances when main messes list updates
+    const updatedSelected = selectedMesses.map(sel => {
+      const found = messes.find(m => m.id === sel.id);
+      return found ? { ...sel, distance: found.distance } : sel;
+    });
+    // Check if anything actually changed to avoid infinite loop
+    const changed = JSON.stringify(updatedSelected) !== JSON.stringify(selectedMesses);
+    if (changed) {
+      setSelectedMesses(updatedSelected);
+    }
+  }, [messes]);
 
   const handleToggle = (mess) => {
     if (selectedMesses.find(m => m.id === mess.id)) {
@@ -132,7 +161,7 @@ function Compare() {
                   {selectedMesses.map(mess => (
                     <div key={mess.id} className="matrix-cell profile-cell">
                       <div style={{ height: '120px', background: 'url(https://via.placeholder.com/400x200?text=+) center/cover no-repeat #E8E8E8', borderRadius: '8px', position: 'relative', overflow: 'hidden' }}>
-                        <div style={{ position: 'absolute', top: '8px', left: '8px', background: mess.tag === 'VEG' ? '#4CAF50' : '#FF5252', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 'bold' }}>
+                        <div className={`mess-tag ${mess.tag && mess.tag.toLowerCase() === 'veg' ? 'veg' : (mess.tag && mess.tag.toLowerCase().includes('non-veg') ? 'non-veg' : '')}`} style={{ position: 'absolute', top: '8px', left: '8px', padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 'bold' }}>
                           {mess.tag}
                         </div>
                       </div>
@@ -148,9 +177,11 @@ function Compare() {
                   <div className="matrix-cell row-label">Overall Rating</div>
                   {selectedMesses.map(mess => (
                     <div key={mess.id} className="matrix-cell">
-                      <span style={{ color: '#FF9800', fontWeight: 'bold', marginRight: '8px' }}>★★★★★</span>
-                      <span style={{ fontWeight: '600' }}>{mess.rating}</span> 
-                      <span style={{ color: '#7E7E7E', fontSize: '12px', marginLeft: '4px' }}>({mess.reviews})</span>
+                      <span style={{ color: '#FF9800', fontWeight: 'bold', marginRight: '6px' }}>
+                        {'★'.repeat(Math.round(parseFloat(mess.rating) || 0))}{'☆'.repeat(5 - Math.round(parseFloat(mess.rating) || 0))}
+                      </span>
+                      <span style={{ fontWeight: '700' }}>{mess.rating}</span>
+                      <span style={{ color: '#7E7E7E', fontSize: '12px', marginLeft: '4px' }}>({mess.reviews} reviews)</span>
                     </div>
                   ))}
                 </div>
@@ -164,7 +195,7 @@ function Compare() {
                   <div className="matrix-cell row-label">Diet Type</div>
                   {selectedMesses.map(mess => (
                     <div key={mess.id} className="matrix-cell">
-                      <span style={{ padding: '4px 12px', background: mess.tag === 'VEG' ? '#4CAF50' : '#FF5252', color: 'white', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>{mess.tag}</span>
+                      <span className={`mess-tag ${mess.tag && mess.tag.toLowerCase() === 'veg' ? 'veg' : (mess.tag && mess.tag.toLowerCase().includes('non-veg') ? 'non-veg' : '')}`} style={{ position: 'static', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>{mess.tag}</span>
                     </div>
                   ))}
                 </div>
@@ -184,36 +215,36 @@ function Compare() {
                   ))}
                 </div>
                 <div className="matrix-row" style={{ gridTemplateColumns: `200px repeat(${selectedMesses.length}, 1fr)` }}>
-                  <div className="matrix-cell row-label">Lunch</div>
+                  <div className="matrix-cell row-label">Lunch (Veg/Non-Veg)</div>
                   {selectedMesses.map(mess => (
-                    <div key={mess.id} className="matrix-cell">₹{mess.pricing.lunch}/day</div>
+                    <div key={mess.id} className="matrix-cell">₹{mess.pricing.lunchVeg} / ₹{mess.pricing.lunchNonVeg}</div>
                   ))}
                 </div>
                 <div className="matrix-row" style={{ gridTemplateColumns: `200px repeat(${selectedMesses.length}, 1fr)` }}>
-                  <div className="matrix-cell row-label">Dinner</div>
+                  <div className="matrix-cell row-label">Dinner (Veg/Non-Veg)</div>
                   {selectedMesses.map(mess => (
-                    <div key={mess.id} className="matrix-cell">₹{mess.pricing.dinner}/day</div>
+                    <div key={mess.id} className="matrix-cell">₹{mess.pricing.dinnerVeg} / ₹{mess.pricing.dinnerNonVeg}</div>
                   ))}
                 </div>
 
                 {/* PLANS Category */}
                 <div className="matrix-category">PLANS</div>
                 <div className="matrix-row" style={{ gridTemplateColumns: `200px repeat(${selectedMesses.length}, 1fr)` }}>
-                  <div className="matrix-cell row-label">Trial Period</div>
+                  <div className="matrix-cell row-label">Trial (Veg/Non-Veg)</div>
                   {selectedMesses.map(mess => (
-                    <div key={mess.id} className="matrix-cell">₹{mess.plans.trial}</div>
+                    <div key={mess.id} className="matrix-cell">₹{mess.plans.trialVeg} / ₹{mess.plans.trialNonVeg}</div>
                   ))}
                 </div>
                 <div className="matrix-row" style={{ gridTemplateColumns: `200px repeat(${selectedMesses.length}, 1fr)` }}>
-                  <div className="matrix-cell row-label">1 Month</div>
+                  <div className="matrix-cell row-label">1 Month (Veg/Non-Veg)</div>
                   {selectedMesses.map(mess => (
-                     <div key={mess.id} className="matrix-cell">₹{mess.plans.oneMonth}</div>
+                     <div key={mess.id} className="matrix-cell">₹{mess.plans.oneMonthVeg} / ₹{mess.plans.oneMonthNonVeg}</div>
                   ))}
                 </div>
                 <div className="matrix-row" style={{ gridTemplateColumns: `200px repeat(${selectedMesses.length}, 1fr)` }}>
-                  <div className="matrix-cell row-label">3 Months</div>
+                  <div className="matrix-cell row-label">3 Months (Veg/Non-Veg)</div>
                   {selectedMesses.map(mess => (
-                     <div key={mess.id} className="matrix-cell">₹{mess.plans.threeMonth}</div>
+                     <div key={mess.id} className="matrix-cell">₹{mess.plans.threeMonthVeg} / ₹{mess.plans.threeMonthNonVeg}</div>
                   ))}
                 </div>
 

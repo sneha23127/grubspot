@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
+import { getUserCoords, getDistanceToMess, getDistanceFromCoords, parseDistance, requestUserLocation } from '../utils/location';
 
 function SavedMesses() {
   const [savedIds, setSavedIds] = useState([]);
@@ -10,11 +11,23 @@ function SavedMesses() {
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
+  const user = JSON.parse(sessionStorage.getItem('user') || 'null');
+
   useEffect(() => {
     window.scrollTo(0, 0);
-    const saved = JSON.parse(localStorage.getItem('savedMesses') || '[]');
-    setSavedIds(saved);
-    fetchMesses();
+    // Read from DB-synced user object
+    if (user && user.details && user.details.savedMesses) {
+      setSavedIds(user.details.savedMesses);
+    } else {
+      const saved = JSON.parse(localStorage.getItem('savedMesses') || '[]');
+      setSavedIds(saved);
+    }
+    // Request location first so it's ready when fetchMesses runs
+    const init = async () => {
+      await requestUserLocation();
+      fetchMesses();
+    };
+    init();
   }, []);
 
   const fetchMesses = async () => {
@@ -24,7 +37,7 @@ function SavedMesses() {
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const today = days[new Date().getDay()];
 
-        setMesses(res.data.messes.map(m => {
+        const mapped = res.data.messes.map(m => {
           const dbMenu = m.menu_data ? m.menu_data[today] : null;
           const specials = dbMenu ? [
             ...(dbMenu.breakfast || []).slice(0, 1).map(i => i.name),
@@ -38,14 +51,34 @@ function SavedMesses() {
             owner: m.name,
             rating: details.avgRating || "0.0",
             reviews: details.totalReviews || 0,
-            distance: "N/A",
+            distance: "Calculating...",
             type: details.type || 'Standard',
             tag: details.tag || 'GENERAL',
             categories: specials.length > 0 ? specials : ['Menu not set'],
             price: details.subscriptionPlans?.oneMonth ? '₹' + details.subscriptionPlans.oneMonth.toLocaleString('en-IN') : 'Price Not Set',
-            address: m.address || "Location not set"
+            address: m.address || "Location not set",
+            latitude: m.latitude,
+            longitude: m.longitude,
+            image: details.image || null
           };
-        }));
+        });
+        setMesses(mapped);
+
+        // Compute distances in background
+        const userCoords = getUserCoords();
+        if (userCoords) {
+          const withDistances = await Promise.all(
+            mapped.map(async (m) => {
+              const direct = getDistanceFromCoords(userCoords, m.latitude, m.longitude);
+              const distance = direct !== null ? direct : await getDistanceToMess(userCoords, m.address);
+              return { ...m, distance };
+            })
+          );
+          withDistances.sort((a, b) => parseDistance(a.distance) - parseDistance(b.distance));
+          setMesses(withDistances);
+        } else {
+          setMesses(mapped.map(m => ({ ...m, distance: 'Not calculated' })));
+        }
       }
     } catch (error) {
       console.error('Error fetching messes:', error);
@@ -56,11 +89,25 @@ function SavedMesses() {
 
   const savedMesses = messes.filter(m => savedIds.includes(m.id));
 
-  const toggleSaveMess = (id, e) => {
+  const toggleSaveMess = async (id, e) => {
     e.stopPropagation();
     const updated = savedIds.filter(mId => mId !== id);
     setSavedIds(updated);
     localStorage.setItem('savedMesses', JSON.stringify(updated));
+
+    if (user) {
+      try {
+        const res = await axios.post('http://localhost:5000/api/users/update-profile', {
+          id: user.id,
+          details: { ...user.details, savedMesses: updated }
+        });
+        if (res.data.status === 'success') {
+          sessionStorage.setItem('user', JSON.stringify(res.data.user));
+        }
+      } catch (error) {
+        console.error('Error saving wishlist to DB:', error);
+      }
+    }
   };
 
   return (
@@ -84,8 +131,16 @@ function SavedMesses() {
           <div className="mess-grid">
             {savedMesses.map(mess => (
               <div key={mess.id} className="mess-card">
-                <div className="mess-image-placeholder" style={{ position: 'relative' }}>
-                  <div className="mess-tag" style={{ background: mess.tag === 'VEG' ? '#4CAF50' : '#FF5252', zIndex: 1 }}>
+                <div 
+                  className="mess-image-placeholder" 
+                  style={{ 
+                    position: 'relative',
+                    backgroundImage: mess.image ? `url(${mess.image})` : 'none',
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center'
+                  }}
+                >
+                  <div className={`mess-tag ${mess.tag && mess.tag.toLowerCase() === 'veg' ? 'veg' : (mess.tag && mess.tag.toLowerCase().includes('non-veg') ? 'non-veg' : '')}`} style={{ zIndex: 1 }}>
                     {mess.tag}
                   </div>
                   <div 
