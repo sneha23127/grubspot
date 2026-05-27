@@ -55,7 +55,7 @@ function MessDetail() {
   const fetchUserSubscriptions = async () => {
     if (!user || !user.id) return;
     try {
-      const res = await axios.get(`http://localhost:5000/api/subscriptions/user/${user.id}`);
+      const res = await axios.get(``${process.env.REACT_APP_BASE_URL}/api/subscriptions/user/${user.id}``);
       if (res.data.status === 'success') {
         setUserSubscriptions(res.data.subscriptions);
       }
@@ -66,7 +66,7 @@ function MessDetail() {
 
   const fetchReviews = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/messes');
+      const res = await axios.get(`${process.env.REACT_APP_BASE_URL}/api/messes`);
       if (res.data.status === 'success') {
         const found = res.data.messes.find(m => m.id === parseInt(id));
         if (found) {
@@ -85,7 +85,8 @@ function MessDetail() {
 
   const fetchMessDetail = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/messes');
+      const res = await axios.get(`
+${process.env.REACT_APP_BASE_URL}`/api/messes');
       if (res.data.status === 'success') {
         const found = res.data.messes.find(m => m.id === parseInt(id));
         if (found) {
